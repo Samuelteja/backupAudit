@@ -1,0 +1,20 @@
+# Web Framework
+fastapi
+
+# High-performance ASGI Server to run FastAPI
+uvicorn[standard]
+
+# Database Driver for PostgreSQL
+psycopg2-binary
+
+# Database Migration Tool
+alembic
+
+# ORM (Object Relational Mapper) to talk to the DB with Python objects
+sqlalchemy
+
+# Password Hashing Library
+passlib[bcrypt]
+
+# For handling JWT (JSON Web Tokens) for authentication
+python-jose[cryptography]

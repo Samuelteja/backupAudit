@@ -1,0 +1,48 @@
+# --- General ---
+# Environment variables file
+.env
+
+# Docker-compose temporary files
+docker-compose.override.yml
+
+# IDE/Editor specific files
+.idea/
+.vscode/
+*.swp
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# --- Python / Backend ---
+# Virtual environment folder
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# --- Node / Frontend ---
+# Node modules - this folder is huge and can be reinstalled from package-json.
+frontend/node_modules/
+
+# React build output - this is generated during the build process.
+frontend/build/
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Docker ---
+# Named volume data for PostgreSQL.
+# This ensures we don't accidentally commit our entire database to Git.
+postgres_data/

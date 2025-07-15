@@ -1,0 +1,56 @@
+# This is the master blueprint for running our multi-container application.
+# Version '3.8' is a modern, stable version of the Docker Compose file format.
+version: '3.8'
+
+services:
+  # 1. The Database Service
+  db:
+    image: postgres:15-alpine # Use a lightweight, official PostgreSQL image.
+    volumes:
+      # This is crucial: It saves the database data to a folder on your local machine.
+      # This means your data will still be there even if you stop and restart the containers.
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      # Set the credentials for the database. These are used by the backend to connect.
+      # IMPORTANT: We will create a .env file for these values.
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      # (Optional) Map the container's port 5432 to your local machine's port 5432.
+      # This is useful if you want to connect to the DB with a local GUI tool.
+      - "5432:5432"
+
+  # 2. The Backend API Service
+  backend:
+    build:
+      context: ./backend # Tells Docker to look for the Dockerfile in the 'backend' folder.
+    volumes:
+      # This is the magic for local development ("hot reloading").
+      # It maps your local 'backend' code folder to the '/app' folder inside the container.
+      # When you change a .py file, the server inside the container will automatically restart.
+      - ./backend:/app
+    ports:
+      - "8000:8000" # Map the container's port 8000 to your local machine's port 8000.
+    environment:
+      # Pass the database connection details to the backend application.
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      - db # Tells Docker to start the 'db' service before starting the 'backend' service.
+
+  # 3. The Frontend Web Service
+  frontend:
+    build:
+      context: ./frontend # Tells Docker to look for the Dockerfile in the 'frontend' folder.
+    volumes:
+      # Hot reloading for the frontend. Maps your local 'src' folder.
+      # When you change a .js or .css file, the React app will update in your browser.
+      - ./frontend/src:/app/src
+    ports:
+      - "3000:80" # Map the container's port 80 (Nginx) to your local machine's port 3000.
+    depends_on:
+      - backend
+
+# Define the named volume we used for the database to ensure data persistence.
+volumes:
+  postgres_data:
