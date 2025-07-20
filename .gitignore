@@ -1,48 +1,53 @@
 # --- General ---
-# Environment variables file
+# Environment variables file. Contains secrets. NEVER commit this.
 .env
 
-# Docker-compose temporary files
-docker-compose.override.yml
-
-# IDE/Editor specific files
-.idea/
+# IDE and Editor specific files
 .vscode/
+.idea/
 *.swp
 
 # OS-specific files
 .DS_Store
 Thumbs.db
 
+# User-specific temporary files
+.tmp.driveupload
+folderstruct.py
+
+
+# --- Docker ---
+# Docker-compose temporary override files
+docker-compose.override.yml
+
+
 # --- Python / Backend ---
-# Virtual environment folder
+# Virtual environment folders
 venv/
 env/
 
-# Python cache
+# Python cache and bytecode files
 __pycache__/
 *.pyc
 *.pyo
 
-# Build artifacts
+# Python distribution and build artifacts
 build/
 dist/
 *.egg-info/
 
+
 # --- Node / Frontend ---
-# Node modules - this folder is huge and can be reinstalled from package-json.
+# Node modules folder. This is massive and can always be reinstalled via 'npm install'.
 frontend/node_modules/
 
-# React build output - this is generated during the build process.
-frontend/build/
+# Vite's build output directory. This is generated during the build process.
+frontend/dist/
 
-# Log files
-*.log
+# Vite's development cache directory.
+frontend/.vite/
+
+# NPM and Yarn log files
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
-
-# --- Docker ---
-# Named volume data for PostgreSQL.
-# This ensures we don't accidentally commit our entire database to Git.
-postgres_data/
+yarn-error.log*```

@@ -25,6 +25,8 @@ services:
   backend:
     build:
       context: ./backend # Tells Docker to look for the Dockerfile in the 'backend' folder.
+    env_file:
+      - ./.env
     volumes:
       # This is the magic for local development ("hot reloading").
       # It maps your local 'backend' code folder to the '/app' folder inside the container.
@@ -32,9 +34,6 @@ services:
       - ./backend:/app
     ports:
       - "8000:8000" # Map the container's port 8000 to your local machine's port 8000.
-    environment:
-      # Pass the database connection details to the backend application.
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
       - db # Tells Docker to start the 'db' service before starting the 'backend' service.
 

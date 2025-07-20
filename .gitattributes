@@ -1,0 +1,10 @@
+# This is the master rule.
+# It tells Git to automatically handle line endings for all text files.
+# It will store text files with LF endings in the repository and convert them
+# to the OS-specific endings in the local working directory.
+* text=auto
+
+# These lines are good practice to ensure specific file types that MUST have
+# LF endings (like shell scripts for Linux) are always handled correctly.
+*.sh text eol=lf
+*.py text eol=lf

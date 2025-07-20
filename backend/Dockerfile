@@ -56,4 +56,4 @@ EXPOSE 8000
 #                     accessible from outside the container (e.g., from your browser
 #                     or the frontend container).
 #   - --port 8000: The port the server will listen on, matching our EXPOSE instruction.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
