@@ -1,94 +1,102 @@
 # backend/main.py
+"""
+    This is a FastAPI application for managing users and tenants.
+    Summary of Endpoints Created
+    Endpoint	Method	Purpose	Authentication
+    /api/v1/users/	POST	Sign Up: Creates a new Tenant and a new User with the 'owner' role.	Public
+    /api/v1/token	POST	Login: Authenticates a user and provides a JWT.	Public
+    /api/v1/users/me	GET	Get My Profile: Returns the details of the currently logged-in user.	JWT Required
+    /api/v1/tenant/users	GET	List Team Members: Returns all users belonging to your tenant.	JWT Required
+    /api/v1/tenant/users	POST	Invite User: Creates a new user within your tenant.	JWT Required (Admin/Owner only)
+    /api/v1/injest/jobs	POST	Data Ingestion: Receives job data from the Naruto agent.	Agent API Key Required
+
+    Dependencies:
+        get_db(): Provides a database session to an endpoint.
+        get_current_user(token): A security dependency that validates a JWT and returns the corresponding user.
+    Public Endpoints:
+        POST /api/v1/users/: Sign Up for a new user and tenant.
+        POST /api/v1/token: Login for an existing user.
+    Protected User Endpoints (JWT Required):
+        GET /api/v1/users/me: Get the profile of the currently logged-in user.
+        GET /api/v1/tenant/users: List all users in your tenant.
+        POST /api/v1/tenant/users: Invite a new user to your tenant (requires admin/owner role).
+    Protected Agent Endpoint (API Key Required):
+        POST /api/v1/injest/jobs: Allows the Naruto agent to submit backup job data.
+    Utility Endpoints:
+        GET / and GET /api/v1/health: Simple welcome/health check endpoints.
+        GET /api/v1/test_db: An endpoint to verify the database connection.
+"""
 from dotenv import load_dotenv
 load_dotenv()
-# --- 1. Core Imports ---
 from fastapi import FastAPI, Depends, HTTPException, Header
 import os
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
+from typing import List
 
-# --- 2. Application-Specific Imports ---
-# These come after the core imports.
-# We import the modules that contain our database setup and models.
 import database, models, schemas, crud, security
 
-# --- 3. Create the FastAPI App Instance ---
-# This should be done before you define your routes.
 app = FastAPI()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token")
 
-# --- 4. Database Dependency ---
-# This function is a "dependency" that provides a database session
-# to any API endpoint that needs it.
+origins = [
+    "http://localhost",
+    "http://localhost:3000", # The origin of our React frontend
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins, # Allow the origins listed above
+    allow_credentials=True, # Allow cookies to be included in requests (important for auth later)
+    allow_methods=["*"],    # Allow all methods (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"],    # Allow all headers
+)
+
 def get_db():
     db = database.SessionLocal()
     try:
-        yield db  # Provide the session to the endpoint
+        yield db
     finally:
-        db.close() # Close the session after the request is finished
+        db.close()
 
-# --- 5. Security Dependency ---
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    """
-    This is a dependency that our protected endpoints will use.
-    It decodes the JWT token, validates it, and fetches the user from the database.
-    If the token is invalid or the user doesn't exist, it raises a 401 error.
-    """
-    # Define a standard exception to raise for all authentication errors.
     credentials_exception = HTTPException(
         status_code=401,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        # Decode the JWT. This function checks the signature and expiration time.
-        # If either is invalid, it will raise a JWTError.
         payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
-        
-        # Get the email (which we stored in the 'sub' claim) from the payload.
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
-        
-        # We can create a Pydantic model of the token data for validation, though it's simple here.
         token_data = schemas.TokenData(email=email)
     except JWTError:
-        # If decoding fails for any reason (bad signature, expired), raise the error.
         raise credentials_exception
 
-    # Now that we have the email, fetch the user from the database.
     user = crud.get_user_by_email(db, email=token_data.email)
-    
-    # If a user with that email doesn't exist in our DB (e.g., they were deleted),
-    # this is also an authentication failure.
+
     if user is None:
         raise credentials_exception
-        
-    # If all checks pass, return the complete User model object.
     return user
-
-# --- 5. API Endpoints (Routes) ---
-# All your API routes are defined below.
 
 @app.get("/")
 def read_root():
-    """The root endpoint."""
     return {"message": "Welcome to the Assurance Platform API!"}
 
 @app.get("/api/v1/health")
 def health_check():
-    """A simple health check endpoint."""
     return {"status": "ok"}
 
 @app.post("/api/v1/users/", response_model=schemas.User)
-def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    # Create a new user
+def signup_new_user_and_tenant(user: schemas.UserCreateWithTenant, db: Session = Depends(get_db)):
     db_user = crud.get_user_by_email(db, email=user.email)
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    return crud.create_user(db=db, user=user)
+    return crud.create_user_and_tenant(db=db, user_data=user)
 
 @app.get("/api/v1/test_db")
 def test_database_connection(db: Session = Depends(get_db)):
@@ -154,6 +162,24 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
     # dependency has already validated and provided to us.
     return current_user
 
+@app.get("/api/v1/tenant/users", response_model=List[schemas.User])
+def read_tenant_users(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    return crud.get_users_by_tenant(db, tenant_id=current_user.tenant_id)
+
+# NEW: Endpoint for an owner/admin to invite a new user to their tenant
+@app.post("/api/v1/tenant/users", response_model=schemas.User, status_code=201)
+def invite_new_user(user_invite: schemas.UserInvite, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # Role-Based Access Control (RBAC) Check
+    if current_user.role not in ["owner", "admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized to invite users")
+    
+    # Check if user already exists
+    db_user = crud.get_user_by_email(db, email=user_invite.email)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+        
+    return crud.create_tenant_user(db=db, user_data=user_invite, tenant_id=current_user.tenant_id)
+
 # Agent Ingest Endpoint
 @app.post("/api/v1/injest/jobs")
 def injest_backup_jobs(
@@ -164,27 +190,53 @@ def injest_backup_jobs(
 
     # This tells FastAPI to look for a custom HTTP header named 'x-agent-secret'.
     # If the header is missing, 'x_agent_secret' will be None.
-    x_agent_secret: str | None = Header(default=None),
+    x_agent_api_key: str | None = Header(default=None),
 
     # We include the database dependency, as we will use it later.
     db: Session = Depends(get_db)
 ):
     """
-    Receives a list of backup jobs from a Naruto agent, authenticates the agent,
-    and (for now) prints the received data to the log.
+    Receives a list of backup jobs from a Naruto agent, authenticates the agent
+    via its unique API key, and saves the jobs to the database associated
+    with the correct data source.
     """
-    server_secret = os.getenv("AGENT_SHARED_SECRET")
     # Step 1: Authenticate the agent using the shared secret.
-    if x_agent_secret != server_secret:
+    if x_agent_api_key is None:
         # If the secret is missing or incorrect, reject the request.
-        raise HTTPException(status_code=401, detail="Invalid Agent Secret Key")
-
+        raise HTTPException(status_code=401, detail="Invalid Agent API Key")
+    print(f"HOKAGE: Received {len(jobs)} jobs from a trusted Naruto agent. Trying to Save to Database...")
+    data_source = crud.get_data_source_by_api_key(db, api_key=x_agent_api_key)
     # Step 2: Process the data (placeholder for now).
     # This print statement will show up in your 'docker-compose up' log,
     # proving that the data was received successfully.
-    print(f"HOKAGE: Received {len(jobs)} jobs from a trusted Naruto agent.")
-    for job in jobs:
-        print(f"  - Job ID: {job.job_id}, Status: {job.status}")
+    print(f"HOKAGE: Received {len(jobs)} jobs from a trusted Naruto agent. Saving to Database...")
+    new_jobs = []
+    for job_schema in jobs:
+        db_job = models.BackupJob(
+            data_source_id=data_source.id,
+            **job_schema.model_dump()
+        )
+        new_jobs.append(db_job)
+
+    db.add_all(new_jobs)
+    db.commit()
 
     # Step 3: Send a success response back to the agent.
     return {"status": "ok", "received_jobs": len(jobs)}
+
+@app.get("/api/v1/jobs/", response_model=List[schemas.BackupJob])
+def read_backup_jobs(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    jobs = crud.get_jobs_by_tenant(db, tenant_id=current_user.tenant_id)
+    return jobs
+
+@app.get("/api/v1/jobs/{job_id}", response_model=schemas.BackupJob)
+def read_backup_jobs(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    # We use the CRUD function to get jobs linked to the user's tenant_id
+    jobs = crud.get_jobs_by_tenant(db, tenant_id=current_user.tenant_id)
+    return jobs

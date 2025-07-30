@@ -1,4 +1,10 @@
 # backend/security.py
+"""
+This file contains security-related functions, including password hashing and JWT token management.
+verify_password(plain, hashed): Checks if a plain password matches a stored hash.
+get_password_hash(password): Creates a secure hash from a plain password.
+create_access_token(data): Creates a new, expiring JWT for a user session.
+"""
 import os
 from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt

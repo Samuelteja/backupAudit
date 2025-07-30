@@ -1,3 +1,4 @@
+# backupAudit/.gitignore
 # --- General ---
 # Environment variables file. Contains secrets. NEVER commit this.
 .env
