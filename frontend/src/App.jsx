@@ -13,6 +13,8 @@ import MainLayout from './components/MainLayout';
 import SignUpPage from './pages/SignUpPage';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './components/DashboardPage';
+import TeamManagementPage from './pages/TeamManagementPage'; 
+import RiskDiscoveryPage from './pages/RiskDiscoveryPage'; // Import the new page
 
 function App() {
   return (
@@ -26,7 +28,8 @@ function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<MainLayout />}>
             <Route path="/" element={<DashboardPage />} />
-            {/* <Route path="/team" element={<TeamManagementPage />} /> */}
+            <Route path="/team" element={<TeamManagementPage />} />
+            <Route path="/risk" element={<RiskDiscoveryPage />} />
           </Route>
         </Route>
         

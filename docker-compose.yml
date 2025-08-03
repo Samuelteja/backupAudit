@@ -42,11 +42,13 @@ services:
     build:
       context: ./frontend # Tells Docker to look for the Dockerfile in the 'frontend' folder.
     volumes:
-      # Hot reloading for the frontend. Maps your local 'src' folder.
-      # When you change a .js or .css file, the React app will update in your browser.
-      - ./frontend/src:/app/src
+      - ./frontend:/app
+      - /app/node_modules
     ports:
       - "3000:80" # Map the container's port 80 (Nginx) to your local machine's port 3000.
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
     depends_on:
       - backend
 

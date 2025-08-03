@@ -55,3 +55,21 @@ export default apiClient;
 export const getJobs = () => {
   return apiClient.get('/jobs/');
 };
+
+export const getTenantUsers = () => {
+  return apiClient.get('/tenant/users');
+};
+
+export const inviteUser = (email, role) => {
+  return apiClient.post('/tenant/users', { email, role });
+};
+
+/**
+ * Fetches the list of unprotected assets for the logged-in user's tenant.
+ * The auth token is added automatically by the interceptor.
+ * @returns {Promise} An axios promise with a list of VM name strings.
+ */
+export const getUnprotectedAssets = () => {
+  console.log("Fetching unprotected assets in API.JS...");
+  return apiClient.get('/tenant/unprotected-assets');
+};

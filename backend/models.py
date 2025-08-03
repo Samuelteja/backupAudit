@@ -10,6 +10,7 @@ import datetime
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from database import Base
+from typing import List
 
 class User(Base):
     __tablename__ = "users"
@@ -19,7 +20,7 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     role = Column(String, nullable=False, server_default="viewer")
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
-    tenant = relationship("Tenant", back_populates="users")
+    tenant = relationship("Tenant")
 
 class Tenant(Base):
     __tablename__ = "tenants"
@@ -27,7 +28,7 @@ class Tenant(Base):
     name = Column(String, index=True, nullable=False)
     owner_id = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    users = relationship("User", back_populates="tenant")
+    assets = relationship("Asset", back_populates="tenant")
 
 class DataSource(Base):
     """
@@ -51,3 +52,13 @@ class BackupJob(Base):
     start_time = Column(DateTime)
     end_time = Column(DateTime, nullable=True) 
     subclient = Column(String)
+
+class Asset(Base):
+    __tablename__ = "assets"
+    id = Column(Integer, primary_key=True, index=True)
+    asset_name = Column(String, index=True, nullable=False)
+    # Where did this asset info come from? e.g., "vcenter", "commvault"
+    source_type = Column(String, index=True, nullable=False) 
+    last_seen = Column(DateTime, default=datetime.datetime.utcnow)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    tenant = relationship("Tenant", back_populates="assets")

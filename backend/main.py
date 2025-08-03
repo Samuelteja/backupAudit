@@ -162,10 +162,6 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
     # dependency has already validated and provided to us.
     return current_user
 
-@app.get("/api/v1/tenant/users", response_model=List[schemas.User])
-def read_tenant_users(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    return crud.get_users_by_tenant(db, tenant_id=current_user.tenant_id)
-
 # NEW: Endpoint for an owner/admin to invite a new user to their tenant
 @app.post("/api/v1/tenant/users", response_model=schemas.User, status_code=201)
 def invite_new_user(user_invite: schemas.UserInvite, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -232,11 +228,56 @@ def read_backup_jobs(
     jobs = crud.get_jobs_by_tenant(db, tenant_id=current_user.tenant_id)
     return jobs
 
-@app.get("/api/v1/jobs/{job_id}", response_model=schemas.BackupJob)
-def read_backup_jobs(
+
+@app.get("/api/v1/tenant/users", response_model=List[schemas.User])
+def read_tenant_users(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    # We use the CRUD function to get jobs linked to the user's tenant_id
-    jobs = crud.get_jobs_by_tenant(db, tenant_id=current_user.tenant_id)
-    return jobs
+    """Retrieves a list of all users belonging to the current user's tenant."""
+    users = crud.get_users_by_tenant(db, tenant_id=current_user.tenant_id)
+    return users
+
+@app.post("/api/v1/ingest/assets", status_code=202)
+def ingest_assets_from_agent(
+    payload: schemas.AssetIngestPayload,
+    x_agent_api_key: str | None = Header(default=None),
+    db: Session = Depends(get_db)
+):
+    """
+    Receives a full asset inventory from an agent for a specific hypervisor.
+    It performs a full reconciliation (delete then create) for that tenant.
+    """
+    # 1. Authenticate the agent and get its associated tenant
+    if not x_agent_api_key:
+        raise HTTPException(status_code=401, detail="Agent API Key is missing")
+    data_source = crud.get_data_source_by_api_key(db, api_key=x_agent_api_key)
+    if not data_source:
+        raise HTTPException(status_code=401, detail="Invalid Agent API Key")
+    
+    tenant_id = data_source.tenant_id
+
+    try:
+        # 2. Reconcile: Delete old assets for this tenant
+        crud.delete_assets_by_tenant(db, tenant_id=tenant_id)
+
+        # 3. Create the new assets from the payload
+        crud.bulk_create_assets(db, assets=payload.asset_list, tenant_id=tenant_id)
+        
+        # 4. Commit the transaction
+        db.commit()
+
+        return {"status": "ok", "message": f"Successfully reconciled {len(payload.asset_list)} assets for tenant {tenant_id}."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
+
+@app.get("/api/v1/tenant/unprotected-assets", response_model=List[str])
+def get_unprotected_assets(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """
+    Analyzes the stored asset data for the current user's tenant and returns
+    a list of assets that are unprotected.
+    """
+    unprotected_list = crud.get_unprotected_assets_for_tenant(db, tenant_id=current_user.tenant_id)
+    return unprotected_list
+

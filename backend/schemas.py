@@ -54,6 +54,31 @@ class User(UserBase):
     class Config:
         from_attributes  = True
 
+# -- Asset Schemas
+class AssetBase(BaseModel):
+    asset_name: str
+    source_type: str
+
+class AssetCreate(AssetBase):
+    pass # For now, creating an asset requires the same info as the base
+
+class Asset(AssetBase):
+    id: int
+    tenant_id: int
+    last_seen: datetime
+
+    class Config:
+        from_attributes = True
+
+# --- Asset Schemas for Ingestion ---
+class AssetIngest(BaseModel):
+    asset_name: str
+    source_type: str
+
+class AssetIngestPayload(BaseModel):
+    hypervisor_hostname: str
+    asset_list: List[AssetIngest]
+
 # -- Token Schemas
 class Token(BaseModel):
     access_token: str
