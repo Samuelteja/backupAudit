@@ -7,7 +7,7 @@ DataSource class: Defines the data_sources table with columns: id, name, hostnam
 BackupJob class: Defines the backup_jobs table with columns: id, job_id, data_source_id, status, start_time, end_time, subclient.
 """
 import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from database import Base
 from typing import List
@@ -28,7 +28,8 @@ class Tenant(Base):
     name = Column(String, index=True, nullable=False)
     owner_id = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    assets = relationship("Asset", back_populates="tenant")
+    assets = relationship("Asset", back_populates="tenant", cascade="all, delete-orphan")
+    alerts = relationship("Alert", back_populates="tenant", cascade="all, delete-orphan")
 
 class DataSource(Base):
     """
@@ -62,3 +63,18 @@ class Asset(Base):
     last_seen = Column(DateTime, default=datetime.datetime.utcnow)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     tenant = relationship("Tenant", back_populates="assets")
+
+class Alert(Base):
+    """
+    Represents a single alert event from a data source.
+    """
+    __tablename__ = "alerts"
+    id = Column(Integer, primary_key=True, index=True)
+    live_feed_id = Column(Integer, unique=True, index=True, nullable=False)
+    alert_name = Column(String, index=True, nullable=False)
+    severity = Column(String, index=True, nullable=False)
+    event_timestamp = Column(DateTime, nullable=False)
+    details = Column(String)
+    is_read = Column(Boolean, server_default='f', nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    tenant = relationship("Tenant", back_populates="alerts")

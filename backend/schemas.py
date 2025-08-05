@@ -103,3 +103,45 @@ class BackupJob(BackupJobBase):
     class Config:
         from_attributes = True
 
+# -- Alert Schemas
+class AlertBase(BaseModel):
+    live_feed_id: int
+    alert_name: str
+    severity: str
+    event_timestamp: datetime
+    details: str | None = None # Allow details to be optional
+
+class AlertCreate(AlertBase):
+    pass # The agent sends the base data
+
+class Alert(AlertBase):
+    id: int
+    tenant_id: int
+    is_read: bool
+
+    class Config:
+        from_attributes = True
+
+class AlertSummary(BaseModel):
+    critical_count_24h: int
+    warning_count_24h: int
+    new_unread_count: int
+    backup_success_rate_24h: float | None = None # Can be None if no jobs ran
+
+class AlertsList(BaseModel):
+    unread_alerts: List[Alert]
+    read_alerts: List[Alert]
+
+class TopAffectedClient(BaseModel):
+    client_name: str
+    count: int
+
+class GroupedAlert(BaseModel):
+    alert_name: str
+    severity: str
+    occurrence_count: int
+    last_seen: datetime
+    top_affected_clients: List[TopAffectedClient]
+
+    class Config:
+        from_attributes = True

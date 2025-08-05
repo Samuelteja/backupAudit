@@ -42,7 +42,16 @@ function Sidebar() {
               </NavLink>
             </li>
           )}
-          
+          <li>
+            <NavLink 
+              to="/alerts"
+              className={({ isActive }) => 
+                isActive ? 'bg-gray-700 text-white ...' : 'text-gray-300 hover:bg-gray-700 ...'
+              }
+            >
+              <span>Alerts</span>
+            </NavLink>
+          </li>
         </ul>
       </nav>
 

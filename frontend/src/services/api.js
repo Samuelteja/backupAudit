@@ -73,3 +73,43 @@ export const getUnprotectedAssets = () => {
   console.log("Fetching unprotected assets in API.JS...");
   return apiClient.get('/tenant/unprotected-assets');
 };
+
+/**
+ * Fetches the high-level alert and job summary for the tenant.
+ * The auth token is added automatically by the interceptor.
+ * @returns {Promise} An axios promise with the summary data object.
+ */
+export const getAlertsSummary = () => {
+  return apiClient.get('/tenant/alerts/summary');
+};
+
+export const getAlerts = (filters = {}) => {
+  // We now accept an object of filters.
+  const params = {};
+  if (filters.alertName) {
+    params.alert_name = filters.alertName;
+  }
+  if (filters.severity) {
+    params.severity = filters.severity;
+  }
+
+  return apiClient.get('/tenant/alerts', { params });
+};
+
+/**
+ * Marks a specific alert as read.
+ * @param {number} alertId The ID of the alert to acknowledge.
+ * @returns {Promise} An axios promise with the updated alert object.
+ */
+export const markAlertAsRead = (alertId) => {
+  console.log("Marking alert %d as read", alertId);
+  return apiClient.post(`/alerts/${alertId}/read`);
+};
+
+/**
+ * Fetches the intelligently grouped and aggregated alert data.
+ * @returns {Promise} An axios promise with the grouped alert data.
+ */
+export const getGroupedAlerts = () => {
+  return apiClient.get('/tenant/alerts/grouped');
+};

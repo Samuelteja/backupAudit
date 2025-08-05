@@ -30,6 +30,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI, Depends, HTTPException, Header
 import os
+import time
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -281,3 +282,84 @@ def get_unprotected_assets(db: Session = Depends(get_db), current_user: models.U
     unprotected_list = crud.get_unprotected_assets_for_tenant(db, tenant_id=current_user.tenant_id)
     return unprotected_list
 
+@app.post("/api/v1/ingest/alerts", status_code=202)
+def ingest_alerts_from_agent(
+    payload: List[schemas.AlertCreate],
+    x_agent_api_key: str | None = Header(default=None),
+    db: Session = Depends(get_db)
+):
+    """
+    Receives a list of recent alerts from an agent.
+    It performs an "upsert" logic, inserting only the new alerts that have not
+    been seen before, based on their unique live_feed_id.
+    """
+    # 1. Authenticate the agent (no change here)
+    if not x_agent_api_key:
+        raise HTTPException(status_code=401, detail="Agent API Key is missing")
+    data_source = crud.get_data_source_by_api_key(db, api_key=x_agent_api_key)
+    if not data_source:
+        raise HTTPException(status_code=401, detail="Invalid Agent API Key")
+    
+    tenant_id = data_source.tenant_id
+
+    try:
+        # 2. Call the new, intelligent upsert function
+        new_alerts_count = crud.upsert_alerts(db=db, alerts=payload, tenant_id=tenant_id)
+
+        return {
+            "status": "ok",
+            "message": f"Processed {len(payload)} alerts. Created {new_alerts_count} new entries."
+        }
+    except Exception as e:
+        # Rollback in case of a DB error during the upsert
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"An internal error occurred during alert ingestion: {e}")
+    
+@app.get("/api/v1/tenant/alerts/summary", response_model=schemas.AlertSummary)
+def get_alerts_summary(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """
+    Returns high-level KPI statistics about alerts and jobs for the
+    currently logged-in user's tenant.
+    """
+    summary_data = crud.get_alert_summary_for_tenant(db, tenant_id=current_user.tenant_id)
+    return summary_data
+
+@app.post("/api/v1/alerts/{alert_id}/read", response_model=schemas.Alert)
+def acknowledge_alert(alert_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """
+    Marks a specific alert as read.
+    """
+    time.sleep(1.5) 
+    updated_alert = crud.mark_alert_as_read(db, alert_id=alert_id, tenant_id=current_user.tenant_id)
+    
+    if not updated_alert:
+        # This error is important for security. It means either the alert doesn't exist,
+        # or the user is trying to access an alert that doesn't belong to their tenant.
+        raise HTTPException(status_code=404, detail="Alert not found or not accessible")
+        
+    return updated_alert
+
+# Add this new endpoint in main.py
+
+@app.get("/api/v1/tenant/alerts", response_model=schemas.AlertsList)
+def get_all_alerts(
+    alert_name: str | None = None,
+    severity: str | None = None, # <-- NEW: Add severity query parameter
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Returns a list of all alerts for the user's tenant, separated into
+    'unread' and 'read' categories.
+    """
+    alerts_data = crud.get_alerts_for_tenant(db, tenant_id=current_user.tenant_id, alert_name_filter=alert_name, severity_filter=severity)
+    return alerts_data
+
+@app.get("/api/v1/tenant/alerts/grouped", response_model=List[schemas.GroupedAlert])
+def get_grouped_alerts(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """
+    Returns a list of alerts that have been intelligently grouped by problem type,
+    showing occurrence counts and top affected clients.
+    """
+    grouped_data = crud.get_grouped_alerts_for_tenant(db, tenant_id=current_user.tenant_id)
+    return grouped_data

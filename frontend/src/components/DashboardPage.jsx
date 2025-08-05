@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/useAuth';
 import { getJobs } from '../services/api'; // <-- Import our new API function
+import AlertsSummary from './AlertsSummary';
 
 function DashboardPage() {
   const { user } = useAuth();
@@ -67,6 +68,7 @@ function DashboardPage() {
     <div className="p-6">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
+        <AlertsSummary />
         <p className="text-gray-500 mt-1">
           Welcome back, {user?.email}! Here's a real-time overview of your backup environment.
         </p>
