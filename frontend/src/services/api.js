@@ -113,3 +113,18 @@ export const markAlertAsRead = (alertId) => {
 export const getGroupedAlerts = () => {
   return apiClient.get('/tenant/alerts/grouped');
 };
+
+// To create the initial analysis task
+export const createAnalysisTask = (jobDbId) => {
+  return apiClient.post(`/jobs/${jobDbId}/analysis-tasks`);
+};
+
+// To poll for the status and final result
+export const getTaskResult = (taskId) => {
+  return apiClient.get(`/agent-tasks/${taskId}`);
+};
+
+// Fetches the high-level details for a single job.
+export const getJobById = (jobDbId) => {
+    return apiClient.get(`/jobs/${jobDbId}`);
+};

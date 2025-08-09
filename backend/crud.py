@@ -16,7 +16,7 @@ import models
 import schemas
 import security
 import json
-from services import ai_service
+from services import ai_service, prompt_service
 
 """ User Management Start """
 
@@ -77,6 +77,15 @@ def get_jobs_by_tenant(db: Session, tenant_id: int):
     """Gets all backup jobs for a given tenant."""
     return db.query(models.BackupJob).join(models.DataSource).filter(models.DataSource.tenant_id == tenant_id).all()
 
+def get_job_by_id_for_tenant(db: Session, job_db_id: int, tenant_id: int) -> models.BackupJob | None:
+    # This query joins the BackupJob table with the DataSource table.
+    # It then filters to find a job that has the correct database ID
+    # AND is linked to a data source that belongs to the correct tenant_id.
+    return db.query(models.BackupJob).join(models.DataSource).filter(
+        models.BackupJob.id == job_db_id,
+        models.DataSource.tenant_id == tenant_id
+    ).first()
+
 """ Task Management Start """
 def create_agent_task(
     db: Session, 
@@ -126,7 +135,6 @@ def update_task_status(db: Session, task_id: int, new_status: str, result: dict 
         db.refresh(task)
     return task
 
-
 def get_completed_child_task(db: Session, parent_task_id: int) -> models.AgentTask | None:
     """
     Finds a 'complete' child task for a given parent task ID.
@@ -146,6 +154,28 @@ def get_completed_child_task(db: Session, parent_task_id: int) -> models.AgentTa
         models.AgentTask.status == "complete"
     ).first()
 
+# in backend/crud.py
+
+def lock_task_for_triage(db: Session, task: models.AgentTask) -> bool:
+    """
+    Atomically sets the task status to 'trieaging' to prevent race conditions.
+    
+    Returns:
+        True if the lock was acquired, False if it was already locked.
+    """
+    # This query finds a task that is 'complete' and ready for triage.
+    # with_for_update() locks the row in the database until the transaction is committed.
+    locked_task = db.query(models.AgentTask).filter(
+        models.AgentTask.id == task.id,
+        models.AgentTask.status == 'complete' 
+    ).with_for_update().first()
+
+    if locked_task:
+        locked_task.status = 'trieaging'
+        db.commit()
+        return True
+    return False
+
 """ Task Management End """   
 """ AI Triage Management Start """
 
@@ -155,66 +185,12 @@ def perform_ai_triage(db: Session, task: models.AgentTask) -> schemas.AITriageRe
     failure_summary = job_details.get("failure_summary", "No summary available.")
     formatted_events = "\n".join([f"- {evt.get('message')}" for evt in job_details.get("events", [])[-10:]])
     
-    # --- NEW, MORE STRICT PROMPT ---
-    prompt = f"""
-    You are a Commvault Triage Expert. Analyze the following data from a failed backup job.
-    Your task is to decide if you have enough information for a root cause analysis or if more logs are needed.
-
-    DATA:
-    - Failure Summary: "{failure_summary}"
-    - Final Job Events: "{formatted_events}"
-
-    CRITICAL INSTRUCTION: You must respond ONLY with a valid JSON object. Do not include any introductory text, explanations, or code formatting like ```json. Your entire response must be a single JSON object.
-
-    First, decide if the data is sufficient. If the summary or events are specific (e.g., "insufficient free space", "network timeout", "credentials failed"), the information IS sufficient. If both are generic (e.g., "backup failed"), you NEED more logs.
-
-    Then, construct your JSON response based on one of the two following examples.
-
-    EXAMPLE 1: If information IS sufficient:
-    {{
-      "is_sufficient": true,
-      "logs_needed": [],
-      "analysis": {{
-        "problem_summary": "The backup failed due to insufficient disk space on the MediaAgent.",
-        "probable_cause": "The DDB snapshot could not be created because the volume group 'vgnrm1' did not have enough free extents.",
-        "recommended_action": "The storage administrator needs to extend the 'vgnrm1' volume group on the MediaAgent to free up space for DDB snapshots."
-      }}
-    }}
-
-    EXAMPLE 2: If information is NOT sufficient:
-    {{
-      "is_sufficient": false,
-      "logs_needed": ["JobManager.log"],
-      "analysis": null
-    }}
-    """
-
-    promptfortest = f"""
-    You are a Commvault Triage Expert acting in a system testing capacity.
-    Your current objective is to test the system's ability to fetch detailed logs.
-    Therefore, for this specific request, you must always decide that the initial information is insufficient, even if it appears to be specific and complete.
-
-    DATA:
-    - Failure Summary: "{failure_summary}"
-    - Final Job Events: "{formatted_events}"
-
-    CRITICAL INSTRUCTION: You must respond ONLY with a valid JSON object. Do not include any introductory text or explanations. Your entire response must be a single JSON object.
-
-    Based on your objective to test the log fetching system, construct your JSON response to match the following example perfectly.
-
-    EXAMPLE RESPONSE (USE THIS FORMAT):
-    {{
-      "is_sufficient": false,
-      "logs_needed": ["JobManager.log"],
-      "analysis": null
-    }}
-    """
-
+    prompt = prompt_service.get_triage_prompt(failure_summary, formatted_events)
     system_prompt = "You are an expert system that responds only in valid JSON format."
 
     try:
         # Call the new, smart service function that returns a dictionary
-        ai_data = ai_service.get_structured_ai_analysis(promptfortest, system_prompt=system_prompt)
+        ai_data = ai_service.get_structured_ai_analysis(prompt, system_prompt=system_prompt)
         print("ai data in ai triage:", ai_data)
         # Validate the dictionary against our Pydantic schema
         triage_result = schemas.AITriageResponse(**ai_data)
@@ -233,30 +209,12 @@ def perform_ai_deep_analysis(db: Session, parent_task: models.AgentTask, child_t
     log_data = child_task.result
     formatted_logs = "\n".join([f"{log_name}:\n{content}" for log_name, content in log_data.items()])
     
-    # Craft the final, detailed prompt
-    prompt = f"""
-    You are a Commvault Root Cause Analysis Expert. You have the following comprehensive information for a failed backup job.
-
-    Initial Triage Data:
-    - Failure Summary: {initial_data.get('failure_summary')}
-    - Final Job Events: {initial_data.get('events')}
-
-    Detailed Log Snippets from requested files:
-    ---
-    {formatted_logs}
-    ---
-
-    Based on ALL of this combined information, provide the final, definitive analysis.
-    Respond ONLY in JSON format with three keys: "problem_summary", "probable_cause", and "recommended_action".
-    """
-
+    prompt = prompt_service.get_deep_analysis_prompt(initial_data, log_data)
     system_prompt = "You are an expert system that responds only in valid JSON."
 
     try:
-        # Call the same, smart service function
         ai_analysis = ai_service.get_structured_ai_analysis(prompt, system_prompt=system_prompt)
         print("ai deep data in ai triage:", ai_analysis)
-        # Pydantic validation for the final result
         validated_analysis = schemas.AIFinalAnalysis(**ai_analysis)
         return validated_analysis.model_dump()
     except Exception as e:

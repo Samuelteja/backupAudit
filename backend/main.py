@@ -241,7 +241,25 @@ def read_backup_jobs(
     jobs = crud.get_jobs_by_tenant(db, tenant_id=current_user.tenant_id)
     return jobs
 
-# Backup Jobs APIs End
+@app.get("/api/v1/jobs/{job_db_id}", response_model=schemas.BackupJob)
+def read_job_by_id(
+    job_db_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Gets a single backup job by its database ID, ensuring tenant security."""
+    job = crud.get_job_by_id_for_tenant(db, job_db_id=job_db_id, tenant_id=current_user.tenant_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+def get_job_by_id_for_tenant(db: Session, job_db_id: int, tenant_id: int):
+    """Gets a single job, verifying it belongs to the correct tenant."""
+    return db.query(models.BackupJob).join(models.DataSource).filter(
+        models.BackupJob.id == job_db_id,
+        models.DataSource.tenant_id == tenant_id
+    ).first()
+# Backup Job APIs End
 
 # Assets APIs Start
 
@@ -416,7 +434,6 @@ async def listen_for_agent_tasks(
     
     data_source_id = data_source.id
     
-    # First, immediately check for any tasks that were queued while the agent was offline.
     task = crud.get_pending_task_for_agent(db, data_source_id=data_source_id)
     if task:
         crud.update_task_status(db, task_id=task.id, new_status="processing")
@@ -473,11 +490,9 @@ def create_job_analysis_task(
     
     if job.data_source_id in agent_task_channels:
         waiter = agent_task_channels[job.data_source_id]
-        # Mark the task as processing *before* sending it.
-        updated_task = crud.update_task_status(db, task_id=new_task.id, new_status="processing")
-        # Set the result on the Future. This will "wake up" the waiting agent's request
-        # and send the updated_task object as the response body.
-        waiter.set_result(updated_task)
+        updated_task_model = crud.update_task_status(db, task_id=new_task.id, new_status="processing")
+        task_schema = schemas.AgentTask.from_orm(updated_task_model)
+        waiter.set_result(task_schema)
     
     return new_task
 
@@ -518,43 +533,48 @@ def get_task_status_and_result(
         raise HTTPException(status_code=404, detail="Task not found")
 
     # Stage 1: Perform Triage if it hasn't been done yet.
-    if task.status == "complete" and task.task_type == "GET_JOB_DETAILS" and not task.result.get("triage_complete"):
-        
-        triage_result = crud.perform_ai_triage(db, task=task)
-        
-        task.result["triage_complete"] = True
-        task.result["triage_decision"] = triage_result.model_dump()
-        
-        if triage_result.is_sufficient:
-            task.result["ai_analysis"] = triage_result.analysis.model_dump()
-            task.status = "finalized"
+    if task.task_type == "GET_JOB_DETAILS" and task.status == "complete":
+        lock_acquired = crud.lock_task_for_triage(db, task=task)
+        if lock_acquired:
+            print(f"STATE MACHINE: Running Triage for Task #{task.id}")
+            triage_result = crud.perform_ai_triage(db, task=task)
+            
+            task.result["triage_complete"] = True
+            task.result["triage_decision"] = triage_result.model_dump()
+            
+            if triage_result.is_sufficient:
+                task.result["ai_analysis"] = triage_result.analysis.model_dump()
+                task.status = "finalized"
+            else:
+                log_fetch_task_model = crud.create_agent_task(
+                    db, 
+                    data_source_id=task.data_source_id,
+                    task_type="GET_SPECIFIC_LOGS",
+                    payload={
+                        "job_id": task.result.get("job_id"),
+                        "logs_to_fetch": triage_result.logs_needed
+                    },
+                    parent_task_id=task.id
+                )
+                if task.data_source_id in agent_task_channels:
+                    log_fetch_task_schema = schemas.AgentTask.from_orm(log_fetch_task_model)
+                    agent_task_channels[task.data_source_id].set_result(log_fetch_task_schema)
+            
+            flag_modified(task, "result")
+            db.commit()
+            db.refresh(task)
         else:
-            log_fetch_task = crud.create_agent_task(
-                db, 
-                data_source_id=task.data_source_id,
-                task_type="GET_SPECIFIC_LOGS",
-                payload={
-                    "job_id": task.result.get("job_id"),
-                    "logs_to_fetch": triage_result.logs_needed
-                },
-                parent_task_id=task.id
-            )
-            if task.data_source_id in agent_task_channels:
-                agent_task_channels[task.data_source_id].set_result(log_fetch_task)
-        
-        flag_modified(task, "result")
-        db.commit()
-        db.refresh(task)
+            print(f"STATE MACHINE: Triage for Task #{task.id} is already in progress.")
 
     # Stage 2: Perform Deep Analysis if the child task is complete.
     # We check if the analysis is missing to prevent re-running it.
-    if task.status != "finalized" and task.result and not task.result.get("ai_analysis"):
+    if task.status == "trieaging" and not task.result.get("ai_analysis"):
         child_task = crud.get_completed_child_task(db, parent_task_id=task.id)
         if child_task:
             ai_analysis_result = crud.perform_ai_deep_analysis(db, parent_task=task, child_task=child_task)
             
             task.result["ai_analysis"] = ai_analysis_result
-            task.status = "finalized" # The entire flow is complete.
+            task.status = "finalized"
             flag_modified(task, "result")
             db.commit()
             db.refresh(task)

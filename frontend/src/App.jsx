@@ -16,6 +16,7 @@ import DashboardPage from './components/DashboardPage';
 import TeamManagementPage from './pages/TeamManagementPage'; 
 import RiskDiscoveryPage from './pages/RiskDiscoveryPage'; 
 import AlertsDashboardPage from './pages/AlertsDashboardPage';
+import JobDetailsPage from './pages/JobDetailsPage';
 
 function App() {
   return (
@@ -32,6 +33,7 @@ function App() {
             <Route path="/team" element={<TeamManagementPage />} />
             <Route path="/risk" element={<RiskDiscoveryPage />} />
             <Route path="/alerts" element={<AlertsDashboardPage />} />
+            <Route path="/jobs/details/:jobId" element={<JobDetailsPage />} />
           </Route>
         </Route>
         

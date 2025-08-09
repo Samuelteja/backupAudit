@@ -167,6 +167,7 @@ class AgentTask(BaseModel):
     id: int
     task_type: str
     status: str
+    task_payload: Dict[str, Any] | None = None
     result: Dict[str, Any] | None = None
     parent_task_id: int | None = None
     created_at: datetime

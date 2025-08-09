@@ -1,8 +1,9 @@
 // src/pages/DashboardPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/useAuth';
-import { getJobs } from '../services/api'; // <-- Import our new API function
+import { getJobs } from '../services/api';
 import AlertsSummary from './AlertsSummary';
+import { Link } from 'react-router-dom';
 
 function DashboardPage() {
   const { user } = useAuth();
@@ -60,6 +61,16 @@ function DashboardPage() {
         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{job.subclient}</td>
         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(job.start_time).toLocaleString()}</td>
         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{job.end_time ? new Date(job.end_time).toLocaleString() : 'N/A'}</td>
+        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+          {job.status.toLowerCase() !== 'completed' && (
+            <Link 
+              to={`/jobs/details/${job.id}`} 
+              className="text-indigo-600 hover:text-indigo-900 font-semibold hover:underline"
+            >
+              Analyze
+            </Link>
+          )}
+        </td>
       </tr>
     ));
   };
@@ -87,6 +98,7 @@ function DashboardPage() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subclient</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Start Time</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">End Time</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
