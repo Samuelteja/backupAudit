@@ -15,20 +15,21 @@ from typing import List
 import models
 import schemas
 import security
+import json
+from services import ai_service
+
+""" User Management Start """
 
 def get_user_by_email(db: Session, email: str) -> models.User | None:
     return db.query(models.User).options(joinedload(models.User.tenant)).filter(models.User.email == email).first()
 
 def create_user_and_tenant(db: Session, user_data: schemas.UserCreateWithTenant):
-    # This is an atomic transaction. If any step fails, the whole thing is rolled back.
-    
-    # 1. Create the user object (without tenant_id yet) and set their role as 'owner'
     db_tenant = models.Tenant(name=user_data.tenant_name, owner_id=0)
     hashed_password = security.get_password_hash(user_data.password)
     db_user = models.User(
         email=user_data.email, 
         hashed_password=hashed_password,
-        role='owner',  # The first user is always the owner
+        role='owner',
         tenant=db_tenant
     )
     db.add(db_user)
@@ -40,23 +41,19 @@ def create_user_and_tenant(db: Session, user_data: schemas.UserCreateWithTenant)
     
     return db_user
 
-# NEW: Function for an admin to invite a new user
 def create_tenant_user(db: Session, user_data: schemas.UserInvite, tenant_id: int):
-    # For invited users, we can set a default password or implement a password reset flow later.
-    # For now, we'll use a simple, non-secure default.
     hashed_password = security.get_password_hash("changeme") 
     db_user = models.User(
         email=user_data.email,
         hashed_password=hashed_password,
         role=user_data.role,
-        tenant_id=tenant_id # Assign to the admin's tenant
+        tenant_id=tenant_id
     )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
     return db_user
 
-# NEW: Function to get all users for a specific tenant
 def get_users_by_tenant(db: Session, tenant_id: int):
     return db.query(models.User).filter(models.User.tenant_id == tenant_id).all()
 
@@ -71,17 +68,209 @@ def get_data_source_by_api_key(db: Session, api_key: str) -> models.DataSource |
     Returns:
         The DataSource model object if found, otherwise None.
     """
-    # This is a standard SQLAlchemy query:
-    # 1. Query the DataSource table.
-    # 2. Filter for a row where the 'api_key' column matches the provided key.
-    # 3. Return the first result found (or None).
     return db.query(models.DataSource).filter(models.DataSource.api_key == api_key).first()
 
+""" User Management End """
+
+""" Job Management Start """
 def get_jobs_by_tenant(db: Session, tenant_id: int):
     """Gets all backup jobs for a given tenant."""
-    # This is an advanced query that joins across three tables:
-    # BackupJob -> DataSource -> Tenant
     return db.query(models.BackupJob).join(models.DataSource).filter(models.DataSource.tenant_id == tenant_id).all()
+
+""" Task Management Start """
+def create_agent_task(
+    db: Session, 
+    data_source_id: int, 
+    task_type: str, 
+    payload: dict, 
+    parent_task_id: int | None = None
+) -> models.AgentTask:
+    new_task = models.AgentTask(
+        data_source_id=data_source_id,
+        task_type=task_type,
+        task_payload=payload,
+        status="pending",
+        parent_task_id=parent_task_id
+    )
+    db.add(new_task)
+    db.commit()
+    db.refresh(new_task)
+    return new_task
+
+def get_pending_task_for_agent(db: Session, data_source_id: int) -> models.AgentTask | None:
+    """Gets the oldest pending task for a specific agent."""
+    return db.query(models.AgentTask).filter(
+        models.AgentTask.data_source_id == data_source_id,
+        models.AgentTask.status == "pending"
+    ).order_by(models.AgentTask.created_at).first()
+
+def get_task_by_id(db: Session, task_id: int, tenant_id: int) -> models.AgentTask | None:
+    """Gets a specific task, ensuring it belongs to the correct tenant for security."""
+    return db.query(models.AgentTask).join(models.DataSource).filter(
+        models.AgentTask.id == task_id,
+        models.DataSource.tenant_id == tenant_id
+    ).first()
+
+def update_task_status(db: Session, task_id: int, new_status: str, result: dict | None = None) -> models.AgentTask | None:
+    """Updates the status, result, and error details of a task."""
+    task = db.query(models.AgentTask).filter(models.AgentTask.id == task_id).first()
+    if task:
+        task.status = new_status
+        if result is not None:
+            if new_status == "failed":
+                task.error_details = str(result.get("error", "Unknown agent error"))
+            else:
+                task.result = result
+        
+        db.commit()
+        db.refresh(task)
+    return task
+
+
+def get_completed_child_task(db: Session, parent_task_id: int) -> models.AgentTask | None:
+    """
+    Finds a 'complete' child task for a given parent task ID.
+
+    This is used in the multi-stage analysis to find the result of a 
+    follow-up task, like fetching specific logs.
+
+    Args:
+        db: The SQLAlchemy database session.
+        parent_task_id: The ID of the original, parent task.
+
+    Returns:
+        The completed child AgentTask object if found, otherwise None.
+    """
+    return db.query(models.AgentTask).filter(
+        models.AgentTask.parent_task_id == parent_task_id,
+        models.AgentTask.status == "complete"
+    ).first()
+
+""" Task Management End """   
+""" AI Triage Management Start """
+
+def perform_ai_triage(db: Session, task: models.AgentTask) -> schemas.AITriageResponse:
+    # ... (code to craft the prompt is exactly the same) ...
+    job_details = task.result
+    failure_summary = job_details.get("failure_summary", "No summary available.")
+    formatted_events = "\n".join([f"- {evt.get('message')}" for evt in job_details.get("events", [])[-10:]])
+    
+    # --- NEW, MORE STRICT PROMPT ---
+    prompt = f"""
+    You are a Commvault Triage Expert. Analyze the following data from a failed backup job.
+    Your task is to decide if you have enough information for a root cause analysis or if more logs are needed.
+
+    DATA:
+    - Failure Summary: "{failure_summary}"
+    - Final Job Events: "{formatted_events}"
+
+    CRITICAL INSTRUCTION: You must respond ONLY with a valid JSON object. Do not include any introductory text, explanations, or code formatting like ```json. Your entire response must be a single JSON object.
+
+    First, decide if the data is sufficient. If the summary or events are specific (e.g., "insufficient free space", "network timeout", "credentials failed"), the information IS sufficient. If both are generic (e.g., "backup failed"), you NEED more logs.
+
+    Then, construct your JSON response based on one of the two following examples.
+
+    EXAMPLE 1: If information IS sufficient:
+    {{
+      "is_sufficient": true,
+      "logs_needed": [],
+      "analysis": {{
+        "problem_summary": "The backup failed due to insufficient disk space on the MediaAgent.",
+        "probable_cause": "The DDB snapshot could not be created because the volume group 'vgnrm1' did not have enough free extents.",
+        "recommended_action": "The storage administrator needs to extend the 'vgnrm1' volume group on the MediaAgent to free up space for DDB snapshots."
+      }}
+    }}
+
+    EXAMPLE 2: If information is NOT sufficient:
+    {{
+      "is_sufficient": false,
+      "logs_needed": ["JobManager.log"],
+      "analysis": null
+    }}
+    """
+
+    promptfortest = f"""
+    You are a Commvault Triage Expert acting in a system testing capacity.
+    Your current objective is to test the system's ability to fetch detailed logs.
+    Therefore, for this specific request, you must always decide that the initial information is insufficient, even if it appears to be specific and complete.
+
+    DATA:
+    - Failure Summary: "{failure_summary}"
+    - Final Job Events: "{formatted_events}"
+
+    CRITICAL INSTRUCTION: You must respond ONLY with a valid JSON object. Do not include any introductory text or explanations. Your entire response must be a single JSON object.
+
+    Based on your objective to test the log fetching system, construct your JSON response to match the following example perfectly.
+
+    EXAMPLE RESPONSE (USE THIS FORMAT):
+    {{
+      "is_sufficient": false,
+      "logs_needed": ["JobManager.log"],
+      "analysis": null
+    }}
+    """
+
+    system_prompt = "You are an expert system that responds only in valid JSON format."
+
+    try:
+        # Call the new, smart service function that returns a dictionary
+        ai_data = ai_service.get_structured_ai_analysis(promptfortest, system_prompt=system_prompt)
+        print("ai data in ai triage:", ai_data)
+        # Validate the dictionary against our Pydantic schema
+        triage_result = schemas.AITriageResponse(**ai_data)
+        return triage_result
+    except Exception as e:
+        print(f"ERROR: AI Triage failed: {e}")
+        # Default to needing more logs if the AI service fails for any reason
+        return schemas.AITriageResponse(
+            is_sufficient=False, 
+            logs_needed=["JobManager.log", "CVD.log"]
+        )
+
+def perform_ai_deep_analysis(db: Session, parent_task: models.AgentTask, child_task: models.AgentTask) -> dict:
+    # ... (code to craft the final, deep-dive prompt is the same) ...
+    initial_data = parent_task.result
+    log_data = child_task.result
+    formatted_logs = "\n".join([f"{log_name}:\n{content}" for log_name, content in log_data.items()])
+    
+    # Craft the final, detailed prompt
+    prompt = f"""
+    You are a Commvault Root Cause Analysis Expert. You have the following comprehensive information for a failed backup job.
+
+    Initial Triage Data:
+    - Failure Summary: {initial_data.get('failure_summary')}
+    - Final Job Events: {initial_data.get('events')}
+
+    Detailed Log Snippets from requested files:
+    ---
+    {formatted_logs}
+    ---
+
+    Based on ALL of this combined information, provide the final, definitive analysis.
+    Respond ONLY in JSON format with three keys: "problem_summary", "probable_cause", and "recommended_action".
+    """
+
+    system_prompt = "You are an expert system that responds only in valid JSON."
+
+    try:
+        # Call the same, smart service function
+        ai_analysis = ai_service.get_structured_ai_analysis(prompt, system_prompt=system_prompt)
+        print("ai deep data in ai triage:", ai_analysis)
+        # Pydantic validation for the final result
+        validated_analysis = schemas.AIFinalAnalysis(**ai_analysis)
+        return validated_analysis.model_dump()
+    except Exception as e:
+        print(f"ERROR: AI Deep Analysis failed: {e}")
+        return {
+            "problem_summary": "AI Analysis Failed",
+            "probable_cause": f"The AI service failed to return a valid analysis. Error: {e}",
+            "recommended_action": "Please check the Hokage backend logs for more details."
+        }
+
+""" AI Triage Management End """    
+""" Job Management End """
+
+""" Asset Management Start """
 
 def delete_assets_by_tenant(db: Session, tenant_id: int):
     """
@@ -130,7 +319,9 @@ def get_unprotected_assets_for_tenant(db: Session, tenant_id: int) -> List[str]:
 
     return sorted(list(unprotected_assets))
 
+""" Asset Management End """
 
+""" Alert Management Start """
 
 def upsert_alerts(db: Session, alerts: List[schemas.AlertCreate], tenant_id: int) -> int:
     """
@@ -344,3 +535,6 @@ def get_grouped_alerts_for_tenant(db: Session, tenant_id: int) -> List[dict]:
         })
         
     return results
+
+""" Alert Management End """
+

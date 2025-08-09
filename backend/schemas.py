@@ -16,8 +16,8 @@ BackupJob Schemas:
     BackupJobCreate: The input schema for the agent ingestion endpoint.
     BackupJob: The output schema for returning job data to the frontend.
 """
-from pydantic import BaseModel, EmailStr, computed_field
-from typing import List
+from pydantic import BaseModel, EmailStr, computed_field, Field
+from typing import Any, Dict, List
 from datetime import datetime
 
 class TenantBase(BaseModel):
@@ -145,3 +145,36 @@ class GroupedAlert(BaseModel):
 
     class Config:
         from_attributes = True
+
+# --- NEW: AI Schemas ---
+class AIFinalAnalysis(BaseModel):
+    problem_summary: str
+    probable_cause: str
+    recommended_action: str
+
+class AITriageResponse(BaseModel):
+    is_sufficient: bool
+    logs_needed: List[str] = []
+    analysis: AIFinalAnalysis | None = None
+
+# --- Agent Task Schemas ---
+class TaskResult(BaseModel):
+    # This is a placeholder; you can make it more specific if you want
+    class Config:
+        extra = 'allow'
+
+class AgentTask(BaseModel):
+    id: int
+    task_type: str
+    status: str
+    result: Dict[str, Any] | None = None
+    parent_task_id: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class AgentTaskUpdatePayload(BaseModel):
+    status: str # "complete" or "failed"
+    result: Dict[str, Any]

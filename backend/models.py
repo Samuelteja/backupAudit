@@ -6,9 +6,11 @@ Tenant class: Defines the tenants table with columns: id, name, owner_id, create
 DataSource class: Defines the data_sources table with columns: id, name, hostname, source_type, tenant_id, api_key.
 BackupJob class: Defines the backup_jobs table with columns: id, job_id, data_source_id, status, start_time, end_time, subclient.
 """
-import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
+
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
+import datetime
 from database import Base
 from typing import List
 
@@ -78,3 +80,18 @@ class Alert(Base):
     is_read = Column(Boolean, server_default='f', nullable=False)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     tenant = relationship("Tenant", back_populates="alerts")
+
+class AgentTask(Base):
+    __tablename__ = "agent_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    data_source_id = Column(Integer, ForeignKey("data_sources.id"), nullable=False)
+    task_type = Column(String, nullable=False, index=True)
+    task_payload = Column(JSONB)
+    status = Column(String, nullable=False, default="pending", index=True) # pending -> processing -> complete -> finalized / failed
+    result = Column(JSONB, nullable=True)
+    error_details = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    parent_task_id = Column(Integer, ForeignKey("agent_tasks.id"), nullable=True)
+    parent_task = relationship("AgentTask", remote_side=[id], backref="child_tasks")
